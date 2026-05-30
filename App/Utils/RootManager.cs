@@ -11,9 +11,6 @@ public static class RootManager
 {
     private static bool? _available;
 
-    /// <summary>Root backups are stored here (root-owned, survives the target app's reinstall).</summary>
-    private const string BackupRoot = "/data/local/tmp/lemon_bak";
-
     /// <summary>
     /// Asks for root once (triggers the superuser prompt) and caches whether it was granted.
     /// </summary>
@@ -43,56 +40,66 @@ public static class RootManager
     public static bool IsAvailable => _available ?? false;
 
     /// <summary>
-    /// Backs up the target app's private data, external data and OBBs to a root-owned location
-    /// (suffixed _bak) before it is uninstalled. Returns true if anything was backed up.
+    /// Renames the target app's private data, external data and OBB dirs to a "<dir>_bak" sibling
+    /// before the app is uninstalled. The uninstall removes the package by name, so the differently
+    /// named _bak dirs survive. Returns true if anything was renamed.
     /// </summary>
     public static bool BackupAppData(string packageName, IPatchLogger? logger = null)
     {
         if (!RequestRoot(logger))
             return false;
 
-        logger?.Log("Backing up app data via root...");
+        logger?.Log("Backing up app data via root (renaming to _bak)...");
 
-        string bak = $"{BackupRoot}/{packageName}";
-        Run($"rm -rf '{bak}'; mkdir -p '{bak}'");
+        // Only rename if the source exists and a _bak isn't already present (don't clobber an
+        // earlier backup from an interrupted run).
+        bool any = false;
+        any |= MoveToBak($"/data/data/{packageName}");
+        any |= MoveToBak($"/sdcard/Android/data/{packageName}");
+        any |= MoveToBak($"/sdcard/Android/obb/{packageName}");
 
-        // App private data (most save data lives here), external data, and OBB assets.
-        Run($"[ -d /data/data/{packageName} ] && cp -a /data/data/{packageName} '{bak}/data_bak' || true");
-        Run($"[ -d /sdcard/Android/data/{packageName} ] && cp -a /sdcard/Android/data/{packageName} '{bak}/extdata_bak' || true");
-        Run($"[ -d /sdcard/Android/obb/{packageName} ] && cp -a /sdcard/Android/obb/{packageName} '{bak}/obb_bak' || true");
-
-        logger?.Log($"Root backup stored at {bak}");
-        return true;
+        logger?.Log(any ? "App data renamed to _bak." : "No app data found to back up.");
+        return any;
     }
 
     /// <summary>
-    /// Restores a previous root backup after the patched app is reinstalled, fixing ownership/SELinux
-    /// context so the freshly-installed app (new UID) can read its data.
+    /// Restores the _bak dirs after the patched app is reinstalled, then deletes the _bak dirs.
+    /// /data/data is merged into the freshly-created dir and re-owned to the new UID; the storage
+    /// dirs (no per-app UID/SELinux) are simply renamed back.
     /// </summary>
     public static void RestoreAppData(string packageName, IPatchLogger? logger = null)
     {
         if (!IsAvailable)
             return;
 
-        string bak = $"{BackupRoot}/{packageName}";
-        (int existsCode, _) = Run($"[ -d '{bak}' ]");
-        if (existsCode != 0)
-            return;
+        logger?.Log("Restoring app data from _bak via root...");
 
-        logger?.Log("Restoring app data via root...");
-
-        // The reinstalled app gets a new UID; copy data back and re-own it to that UID.
+        // Private data: the reinstall created a fresh dir with a new UID; merge the backup into it,
+        // re-own to that UID, restore SELinux context, then drop the _bak.
         Run(
-            $"if [ -d '{bak}/data_bak' ]; then " +
-            $"uid=$(stat -c %u /data/data/{packageName}); " +
-            $"cp -a '{bak}/data_bak/.' /data/data/{packageName}/ 2>/dev/null; " +
-            $"chown -R $uid:$uid /data/data/{packageName}; " +
-            $"restorecon -R /data/data/{packageName} 2>/dev/null; fi || true");
+            $"if [ -d /data/data/{packageName}_bak ]; then " +
+            $"uid=$(stat -c %u /data/data/{packageName} 2>/dev/null); " +
+            $"cp -a /data/data/{packageName}_bak/. /data/data/{packageName}/ 2>/dev/null; " +
+            $"[ -n \"$uid\" ] && chown -R $uid:$uid /data/data/{packageName}; " +
+            $"restorecon -R /data/data/{packageName} 2>/dev/null; " +
+            $"rm -rf /data/data/{packageName}_bak; fi || true");
 
-        Run($"if [ -d '{bak}/extdata_bak' ]; then mkdir -p /sdcard/Android/data/{packageName}; cp -a '{bak}/extdata_bak/.' /sdcard/Android/data/{packageName}/ 2>/dev/null; fi || true");
-        Run($"if [ -d '{bak}/obb_bak' ]; then mkdir -p /sdcard/Android/obb/{packageName}; cp -a '{bak}/obb_bak/.' /sdcard/Android/obb/{packageName}/ 2>/dev/null; fi || true");
+        // External storage / OBB: just move the backup back over the (re)created dir and drop _bak.
+        RestoreStorageBak($"/sdcard/Android/data/{packageName}");
+        RestoreStorageBak($"/sdcard/Android/obb/{packageName}");
 
-        logger?.Log("Root data restore complete.");
+        logger?.Log("App data restored and _bak removed.");
+    }
+
+    private static bool MoveToBak(string path)
+    {
+        (int code, _) = Run($"if [ -e '{path}' ] && [ ! -e '{path}_bak' ]; then mv '{path}' '{path}_bak'; fi; [ -e '{path}_bak' ]");
+        return code == 0;
+    }
+
+    private static void RestoreStorageBak(string path)
+    {
+        Run($"if [ -e '{path}_bak' ]; then rm -rf '{path}'; mv '{path}_bak' '{path}'; fi || true");
     }
 
 #if ANDROID
