@@ -212,15 +212,17 @@ public static class PatchRunner
             File.Copy(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Desktop), "melon_data/melon_data.zip"), destination);
             return true;
         }
+#endif
 
+        // Allow overriding the bundled MelonLoader payload with a local build (e.g. a fixed
+        // version-detection build) in any configuration: drop it at /sdcard/Download/melon_data.zip.
         if (File.Exists(@"/sdcard/Download/melon_data.zip"))
         {
-            _logger?.Log("Using local melon data");
+            _logger?.Log("Using local melon data from /sdcard/Download/melon_data.zip");
 
-            File.Copy(@"/sdcard/Download/melon_data.zip", destination);
+            File.Copy(@"/sdcard/Download/melon_data.zip", destination, true);
             return true;
         }
-#endif
 
         _logger?.Log("Retrieving release info from GitHub");
 
