@@ -10,7 +10,7 @@ public static class PackageWarningManager
     {
         using HttpClient client = new();
         string rawWarnings = "";
-        try { rawWarnings = await client.GetStringAsync("https://raw.githubusercontent.com/LemonLoader/MelonLoaderInstaller/master/package_warnings.json"); }
+        try { rawWarnings = await client.GetStringAsync("https://raw.githubusercontent.com/xAstroBoy/LemonLoaderInstaller/main/package_warnings.json"); }
         catch (WebException)
         {
             await PopupHelper.Alert("Unable to connect to GitHub! Please check your connection and try again.", "Connection Error", "Exit");
