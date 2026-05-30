@@ -100,6 +100,11 @@ public static class PatchRunner
 
         await RestoreAppData(data);
 
+#if ANDROID
+        // Auto-grant the patched game's permissions (and ours) via root so it runs without prompts.
+        RootManager.GrantAllPermissions(data.PackageName, _logger);
+#endif
+
         MarkSuccess();
     }
 

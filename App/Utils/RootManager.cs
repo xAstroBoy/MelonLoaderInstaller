@@ -91,6 +91,29 @@ public static class RootManager
         logger?.Log("App data restored and _bak removed.");
     }
 
+    /// <summary>
+    /// Grants every permission the (patched) package requests, so the game runs without permission
+    /// prompts. Runtime perms are granted via pm grant; install-time/signature perms are skipped by
+    /// pm automatically. Common special-access ops are allowed too. No-op without root.
+    /// </summary>
+    public static void GrantAllPermissions(string packageName, IPatchLogger? logger = null)
+    {
+        if (!IsAvailable)
+            return;
+
+        logger?.Log($"Granting all permissions to {packageName} via root...");
+
+        // Grant each android.permission.* the package declares (non-grantable ones fail silently).
+        Run($"for p in $(dumpsys package {packageName} | grep -oE 'android\\.permission\\.[A-Z0-9_]+' | sort -u); do pm grant {packageName} \"$p\" 2>/dev/null; done");
+
+        // Special-access app-ops that pm grant can't handle.
+        Run($"appops set {packageName} MANAGE_EXTERNAL_STORAGE allow 2>/dev/null; " +
+            $"appops set {packageName} REQUEST_INSTALL_PACKAGES allow 2>/dev/null; " +
+            $"appops set {packageName} SYSTEM_ALERT_WINDOW allow 2>/dev/null");
+
+        logger?.Log("Permissions granted.");
+    }
+
     private static bool MoveToBak(string path)
     {
         (int code, _) = Run($"if [ -e '{path}' ] && [ ! -e '{path}_bak' ]; then mv '{path}' '{path}_bak'; fi; [ -e '{path}_bak' ]");
