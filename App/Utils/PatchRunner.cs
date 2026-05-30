@@ -175,12 +175,49 @@ public static class PatchRunner
         _logger?.Log("Parsing application Unity version");
 
         _unityVersion = await UnityVersionFinder.ParseUnityVersion(data, _tempPath);
+
+        // Fallback: if auto-detection failed, ask the user to enter the Unity version manually
+        // instead of aborting (handles games we can't read the version from automatically).
+        if (_unityVersion == UnityVersion.MinVersion)
+        {
+            _logger?.Log("Could not auto-detect the Unity version; asking the user.");
+            _unityVersion = await PromptForUnityVersion();
+        }
+
         if (_unityVersion == UnityVersion.MinVersion)
         {
             throw new Exception("Failed to parse Unity version");
         }
 
         _logger?.Log($"Found [ {_unityVersion} ]");
+    }
+
+    private static async Task<UnityVersion> PromptForUnityVersion()
+    {
+        return await MainThread.InvokeOnMainThreadAsync(async () =>
+        {
+            while (true)
+            {
+                string? input = await PopupHelper.Prompt(
+                    "Lemon couldn't detect this game's Unity version automatically.\n\n" +
+                    "Enter it manually (e.g. 2022.3.45f1). You can find it on the game's store page, " +
+                    "or in the Unity splash/credits. Leave blank to cancel.",
+                    "Enter Unity Version",
+                    placeholder: "2022.3.45f1");
+
+                if (string.IsNullOrWhiteSpace(input))
+                    return UnityVersion.MinVersion;
+
+                try
+                {
+                    return UnityVersion.Parse(input.Trim());
+                }
+                catch
+                {
+                    await PopupHelper.Alert($"'{input}' isn't a valid Unity version. Please use a form like 2022.3.45f1.", "Invalid Version");
+                }
+            }
+        });
     }
 
     private static async Task PrepareAssets(string? localUnityDepsPath)

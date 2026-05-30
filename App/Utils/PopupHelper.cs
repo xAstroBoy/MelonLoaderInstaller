@@ -30,4 +30,12 @@ public static class PopupHelper
     {
         return await Application.Current!.MainPage!.DisplayAlert(title, message, yes, no);
     }
+
+    /// <summary>
+    /// Asks the user to type a value. Returns null if cancelled.
+    /// </summary>
+    public static async Task<string?> Prompt(string message, string title, string placeholder = "", string initialValue = "", string accept = "Ok", string cancel = "Cancel")
+    {
+        return await Application.Current!.MainPage!.DisplayPromptAsync(title, message, accept, cancel, placeholder, initialValue: initialValue);
+    }
 }

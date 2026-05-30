@@ -1,11 +1,17 @@
-﻿using AssetsTools.NET.Extra;
+﻿using AssetsTools.NET;
+using AssetsTools.NET.Extra;
 using System.IO.Compression;
+using System.Text.RegularExpressions;
 using UnityVersion = AssetRipper.Primitives.UnityVersion;
 
 namespace MelonLoader.Installer.App.Utils;
 
 public static class UnityVersionFinder
 {
+    // Canonical Unity engine version token: <major>.<minor>.<patch><type><build>
+    // (type: a=alpha b=beta c=china f=final p=patch x=experimental).
+    private static readonly Regex UnityVersionToken = new(@"\d+\.\d+\.\d+[abcfpx]\d+", RegexOptions.Compiled);
+
     public static async Task<UnityVersion> ParseUnityVersion(UnityApplicationFinder.Data data, string tempPath)
     {
 #if ANDROID
@@ -129,7 +135,12 @@ public static class UnityVersionFinder
             stream.Dispose();
 
             BundleFileInstance bundle = uAssetsManager.LoadBundleFile(memoryStream, "/bin/Data/data.unity3d");
-            AssetsFileInstance instance = uAssetsManager.LoadAssetsFileFromBundle(bundle, "globalgamemanagers");
+
+            // Don't use LoadAssetsFileFromBundle: its IsAssetsFile() heuristic returns a false
+            // negative for SerializedFile format >= 0x16 (Unity 2017+/2020+/2022+) and yields null.
+            // Read the serialized file's bytes out of the bundle and load them standalone instead.
+            AssetsFileInstance? instance = LoadSerializedFileFromBundle(uAssetsManager, bundle, "globalgamemanagers")
+                ?? throw new Exception("globalgamemanagers not found in data.unity3d");
             return TryParseUnityVersion(instance.file.Metadata.UnityVersion, data);
         }
         catch (Exception ex)
@@ -141,16 +152,42 @@ public static class UnityVersionFinder
         return UnityVersion.MinVersion;
     }
 
+    // Reads a serialized file (e.g. "globalgamemanagers") out of a loaded bundle without going
+    // through AssetsManager.LoadAssetsFileFromBundle (which can wrongly reject newer formats).
+    private static AssetsFileInstance? LoadSerializedFileFromBundle(AssetsManager assetsManager, BundleFileInstance bundle, string name)
+    {
+        int index = bundle.file.GetFileIndex(name);
+        if (index < 0)
+            return null;
+
+        bundle.file.GetFileRange(index, out long offset, out long length);
+
+        AssetsFileReader reader = bundle.file.DataReader;
+        reader.Position = offset;
+        byte[] serializedFileData = reader.ReadBytes((int)length);
+
+        return assetsManager.LoadAssetsFile(new MemoryStream(serializedFileData), name, false);
+    }
+
     private static UnityVersion TryParseUnityVersion(string version, UnityApplicationFinder.Data data)
     {
-        try
+        if (!string.IsNullOrEmpty(version))
         {
-            return UnityVersion.Parse(version);
+            // Bundle/serialized-file versions carry a changeset suffix ("2022.3.45f1-378343")
+            // that UnityVersion.Parse rejects; extract the canonical token first.
+            string cleaned = version.Trim();
+            Match match = UnityVersionToken.Match(cleaned);
+            if (match.Success)
+                cleaned = match.Value;
+
+            try
+            {
+                return UnityVersion.Parse(cleaned);
+            }
+            catch { }
         }
-        catch
-        {
-            System.Diagnostics.Debug.WriteLine($"Package {data.PackageName} has unparsable version of {version}");
-            return UnityVersion.MinVersion;
-        }
+
+        System.Diagnostics.Debug.WriteLine($"Package {data.PackageName} has unparsable version of {version}");
+        return UnityVersion.MinVersion;
     }
 }
