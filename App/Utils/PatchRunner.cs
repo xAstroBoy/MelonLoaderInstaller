@@ -332,6 +332,19 @@ public static class PatchRunner
 
     private static async Task BackupAppData(UnityApplicationFinder.Data data)
     {
+#if ANDROID
+        // On-device backup is otherwise impossible under scoped storage. If the device is rooted,
+        // ask for root and use it to fully back up the app's data/obb before the reinstall.
+        if (data.Source == UnityApplicationFinder.Source.PackageManager)
+        {
+            if (RootManager.BackupAppData(data.PackageName, _logger))
+                return;
+
+            _logger?.Log("No root access; app data will not be backed up (save data may be lost on reinstall).");
+            return;
+        }
+#endif
+
         // backing up files on-device on most recent android versions is a massive pain, if not impossible
         if (data.Source != UnityApplicationFinder.Source.ADB)
             return;
@@ -363,6 +376,15 @@ public static class PatchRunner
 
     private static async Task RestoreAppData(UnityApplicationFinder.Data data)
     {
+#if ANDROID
+        // Restore the root backup taken in BackupAppData, re-owning data to the reinstalled app's UID.
+        if (data.Source == UnityApplicationFinder.Source.PackageManager)
+        {
+            RootManager.RestoreAppData(data.PackageName, _logger);
+            return;
+        }
+#endif
+
         // backing up files on-device on most recent android versions is a massive pain, if not impossible
         if (data.Source != UnityApplicationFinder.Source.ADB)
             return;
