@@ -47,10 +47,15 @@ internal class RepackAPK : IPatchStep
         WritePatchDate(archive);
 
         // libs data
+        // NOTE: the MelonLoader native libs (libmain proxy, libBootstrap, etc.) MUST overwrite, but the
+        // downloaded stock/unstripped Unity engine (libunity.so) must NOT clobber the game's own engine:
+        // on games with a customized engine (e.g. Meta Quest titles), a stock libunity fails to
+        // initialize ("Unable to initialize the Unity Engine"). The loader injects into the game's own
+        // libunity via the libmain proxy, so we only add Unity-dep libs the APK doesn't already ship.
         if (!patcher.Args.IsSplit)
         {
             CopyTo(archive, Path.Combine(patcher.Info.LemonDataDirectory, "native"), "lib/arm64-v8a", "*.so");
-            CopyTo(archive, Path.Combine(patcher.Info.UnityNativeDirectory, "arm64-v8a"), "lib/arm64-v8a", "*.so");
+            CopyTo(archive, Path.Combine(patcher.Info.UnityNativeDirectory, "arm64-v8a"), "lib/arm64-v8a", "*.so", overwriteExisting: false);
         }
         else
         {
@@ -58,7 +63,7 @@ internal class RepackAPK : IPatchStep
             using ZipArchive libArchive = new(libStream, ZipArchiveMode.Read | ZipArchiveMode.Update);
 
             CopyTo(libArchive, Path.Combine(patcher.Info.LemonDataDirectory, "native"), "lib/arm64-v8a", "*.so");
-            CopyTo(libArchive, Path.Combine(patcher.Info.UnityNativeDirectory, "arm64-v8a"), "lib/arm64-v8a", "*.so");
+            CopyTo(libArchive, Path.Combine(patcher.Info.UnityNativeDirectory, "arm64-v8a"), "lib/arm64-v8a", "*.so", overwriteExisting: false);
         }
 
         patcher.Logger.Log("Writing, this can take a few");
@@ -71,7 +76,7 @@ internal class RepackAPK : IPatchStep
         return true;
     }
 
-    private static void CopyTo(ZipArchive archive, string source, string dest, string matcher = "*.*")
+    private static void CopyTo(ZipArchive archive, string source, string dest, string matcher = "*.*", bool overwriteExisting = true)
     {
         foreach (string file in Directory.GetFiles(source, matcher, SearchOption.AllDirectories))
         {
@@ -79,6 +84,8 @@ internal class RepackAPK : IPatchStep
 
             // I don't think this is supposed to be needed, but I had an issue with an apk having two libmain.so files
             ZipArchiveEntry? entry = archive.GetEntry(entryPath);
+            if (entry != null && !overwriteExisting)
+                continue; // keep the game's own file (e.g. its real libunity.so) instead of clobbering it
             entry?.Delete();
 
             entry = archive.CreateEntry(entryPath, CompressionLevel.Optimal);
